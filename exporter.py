@@ -270,7 +270,7 @@ def exportar_reporte_pdf(
     if not resultado.rebote_confiable:
         story.append(Paragraph(
             "<b>Aviso:</b> el ángulo de rebote no se pudo confirmar con los datos "
-            "capturados (posible corte del buffer del Arduino a 100 muestras). "
+            "capturados (posible corte del buffer del Arduino a 300 muestras). "
             "El valor de energía mostrado puede estar SOBRESTIMADO. Para un "
             "resultado exacto, volvé a capturar el archivo incluyendo la salida "
             "del comando 'e' del Arduino (bloque RESULTADO).",

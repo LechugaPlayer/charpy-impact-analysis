@@ -442,7 +442,7 @@ class CharpyApp(ctk.CTk):
         if not r.rebote_confiable or avisos:
             self.lbl_aviso.configure(
                 text="⚠ El ángulo de rebote no se pudo confirmar con los datos "
-                     "capturados (posible corte del buffer del Arduino a 100 "
+                     "capturados (posible corte del buffer del Arduino a 300 "
                      "muestras). La energía puede estar sobrestimada. Para un "
                      "valor exacto, capturá también la salida del comando 'e' "
                      "del Arduino (bloque RESULTADO) en el mismo archivo."

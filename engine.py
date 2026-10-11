@@ -13,30 +13,38 @@ por Serial.println() es exactamente:
 
     ===== TABLA DE DATOS (copiar y pegar en Excel/Sheets) =====
     Tiempo_us	Angulo_grados
-    0	45.07
-    1000	44.85
-    2000	44.20
+    148	41.85
+    3652	41.40
+    7160	40.65
     ...
     ====== FIN DE TABLA ======
-    Total de puntos: 87
+    Total de puntos: 187
 
-Detalles relevantes extraídos del firmware:
+Detalles relevantes extraídos del firmware (charpy_final_1/charpy_final_1.ino):
   - Separador de columnas: TABULADOR ('\t').
   - Columna 1 (Tiempo_us): entero, microsegundos transcurridos desde que
-    se presionó 's' (tiempoInicioCapturaUs). NO es un timestamp absoluto,
-    siempre arranca en 0 para cada ensayo.
+    el firmware detecta la suelta del péndulo (no desde que se presiona
+    's'). NO es un timestamp absoluto: se reconstruye acumulando los
+    deltas entre muestras, así que la primera fila tiene un valor chico
+    pero no necesariamente 0. Este parser igual lo vuelve relativo a la
+    primera muestra.
   - Columna 2 (Angulo_grados): float con 2 decimales (Serial.println(x,2)).
     Puede ser negativo (el péndulo puede cruzar el cero mecánico definido
     con el comando 'z' hacia el lado contrario). La resolución angular
     real del encoder es 360/(600*4) = 0.15°/cuenta, por lo que los
     valores son siempre múltiplos de 0.15, aunque se impriman con 2
     decimales.
-  - Muestreo nominal: 1 muestra/ms (INTERVALO_MUESTREO_US = 1000).
+  - Muestreo nominal: 1 muestra cada 3.5 ms (INTERVALO_MUESTREO_US =
+    3500). Es un umbral mínimo evaluado en el loop, no un timer, así que
+    el paso real es levemente irregular; cada fila trae su propio tiempo.
   - LÍMITE IMPORTANTE: el firmware solo guarda un máximo de
-    MAX_MUESTRAS = 100 muestras por ensayo (limitación de RAM del Uno).
-    Con 1 ms de paso, esto cubre como máximo 100 ms de movimiento desde
-    que se presiona 's'. Si el semiperiodo real del péndulo (liberación
-    -> impacto -> rebote máximo) dura más de 100 ms, la tabla quedará
+    MAX_MUESTRAS = 300 muestras por ensayo (limitación de RAM del Uno).
+    Con 3.5 ms de paso, esto cubre como máximo ~1050 ms de movimiento
+    desde la suelta. La captura se corta apenas se confirma el pico de
+    rebote (el ángulo baja más de 1° desde el máximo), así que la tabla
+    normalmente termina poco después de ese pico. Si el semiperiodo real
+    del péndulo (liberación -> impacto -> rebote máximo) dura más de
+    ~1050 ms, la tabla quedará
     TRUNCADA antes de alcanzar el ángulo máximo de rebote. El ángulo
     máximo que sí queda bien determinado (porque se calcula en cada
     iteración del loop, sin depender del buffer) se imprime aparte como
@@ -47,8 +55,8 @@ Detalles relevantes extraídos del firmware:
     solo se usa el máximo dentro de la tabla como respaldo.
 
   - Si el usuario capturó también el resto del Monitor Serie (mensajes
-    de bienvenida, "Angulo actual: X grados", bloques de
-    "===== RESULTADO =====", calibración de fricción con 'c', etc.), ese
+    de bienvenida, barra de ángulo en vivo "Angulo: X deg [...]", bloque
+    "RESULTADO DEL ENSAYO", calibración de fricción con 'c', etc.), ese
     texto puede estar mezclado en el mismo .txt. El parser debe ignorarlo
     de forma segura y, cuando sea posible, aprovechar esas líneas como
     metadata adicional (ángulo inicial, ángulo final, energías, pérdida
@@ -195,8 +203,8 @@ def read_arduino_data(filepath: str) -> EnsayoData:
     Es tolerante a:
       - Líneas vacías o con espacios sobrantes.
       - Encabezados, separadores "=====" y cualquier otro texto del
-        Monitor Serie mezclado en el mismo archivo (bienvenida, "Angulo
-        actual: X grados", bloques de RESULTADO, calibración con 'c').
+        Monitor Serie mezclado en el mismo archivo (bienvenida, barra de
+        ángulo en vivo, bloques de RESULTADO, calibración con 'c').
       - Separador tabulador o espacios múltiples.
       - Coma decimal en vez de punto.
       - Finales de línea CRLF (Windows) o LF.
@@ -596,7 +604,7 @@ class MotorCharpy:
 
         # --- Energía absorbida, método de dos puntos (igual al firmware) ---
         # Preferir metadata del propio archivo (ángulo máx. de rebote calculado
-        # en tiempo real por el firmware, no limitado por el buffer de 100
+        # en tiempo real por el firmware, no limitado por el buffer de 300
         # muestras); si no hay metadata, estimar a partir de la tabla cruda.
         if datos.metadata.angulo_inicial_grados is not None:
             angulo_inicial = datos.metadata.angulo_inicial_grados
@@ -612,7 +620,7 @@ class MotorCharpy:
                 warnings.warn(
                     "No se encontro 'Angulo maximo de rebote' en la metadata del "
                     "archivo, y la tabla de datos no muestra un punto de retorno "
-                    "(posible truncamiento por el limite de 100 muestras del "
+                    "(posible truncamiento por el limite de 300 muestras del "
                     "firmware). Se uso el ultimo angulo de la tabla como estimacion, "
                     "lo cual tiende a SOBRESTIMAR la energia absorbida. Para un "
                     "resultado exacto, incluye en el archivo la linea "
