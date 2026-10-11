@@ -5,6 +5,7 @@ Desktop application for analysing data from a home-built **Charpy impact test pe
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![SciPy](https://img.shields.io/badge/scipy-CubicSpline-8CAAE6)
 ![GUI](https://img.shields.io/badge/GUI-CustomTkinter-2E86AB)
+![License](https://img.shields.io/badge/license-MIT-green)
 
 ## Table of contents
 
@@ -24,6 +25,9 @@ Desktop application for analysing data from a home-built **Charpy impact test pe
   - [Pendulum physics](#pendulum-physics)
   - [Robustness heuristics](#robustness-heuristics)
 - [Architecture](#architecture)
+- [Downloads](#downloads)
+  - [Running the application on Windows](#running-the-application-on-windows)
+  - [Building the executable yourself](#building-the-executable-yourself)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Input file format](#input-file-format)
@@ -32,6 +36,7 @@ Desktop application for analysing data from a home-built **Charpy impact test pe
   - [Using the engine as a library](#using-the-engine-as-a-library)
   - [Exports](#exports)
 - [Known limitations](#known-limitations)
+- [License](#license)
 
 ## Features
 
@@ -312,9 +317,36 @@ Main elements of `engine.py`:
 
 Identifiers, comments and GUI labels are written in Spanish and mirror the variable names used in the Arduino firmware, which is included in the `charpy_final_1/` folder.
 
+## Downloads
+
+A ready-to-run Windows build of the graphical interface is published on the [Releases page](https://github.com/aloks93/charpy-impact-analysis/releases/latest). It is a single file, `CharpyImpactAnalysis.exe` (about 75 MB), that bundles Python and all the dependencies, so nothing else has to be installed. The executable is not stored in the repository itself.
+
+### Running the application on Windows
+
+Requires 64-bit Windows 10 or later.
+
+1. Open the [latest release](https://github.com/aloks93/charpy-impact-analysis/releases/latest) and, under **Assets**, download `CharpyImpactAnalysis.exe`.
+2. Move it to any folder and double-click it. No installation or administrator rights are needed.
+3. The executable is not digitally signed, so Windows SmartScreen may show a "Windows protected your PC" dialog the first time. Click **More info** and then **Run anyway**.
+4. Wait for the window titled *Analizador de Ensayo Charpy* to appear. Each start takes several seconds, because the single-file build unpacks itself to a temporary folder first.
+5. Continue with [Graphical interface](#graphical-interface).
+
+The executable contains only the desktop application. The Arduino firmware is uploaded separately; see [Flashing and running a test](#flashing-and-running-a-test). To remove the application, delete the `.exe` file.
+
+### Building the executable yourself
+
+The build uses [PyInstaller](https://pyinstaller.org). From the project folder, with the dependencies from [Installation](#installation) already installed:
+
+```bash
+pip install pyinstaller
+pyinstaller --noconfirm --clean --onefile --windowed --name CharpyImpactAnalysis --collect-data customtkinter --exclude-module PySide6 --exclude-module shiboken6 --exclude-module PySide2 --exclude-module PyQt5 --exclude-module PyQt6 main.py
+```
+
+The result is written to `dist/CharpyImpactAnalysis.exe`. `--collect-data customtkinter` bundles the theme files that CustomTkinter loads at run time, and the `--exclude-module` options keep Qt bindings out of the build if they happen to be installed, since Matplotlib is only used with its Tk backend. The `build/` and `dist/` folders, `*.spec` and `*.exe` files are listed in `.gitignore`.
+
 ## Installation
 
-Requires Python 3.9 or later (developed with Python 3.12).
+These steps are for running the application from source. Requires Python 3.9 or later (developed with Python 3.12).
 
 ```bash
 git clone https://github.com/aloks93/charpy-impact-analysis.git
@@ -452,3 +484,9 @@ Pass `num_puntos_malla=None` to evaluate the spline at the original sampling ins
 - **Moment of inertia from the period** relies on the small-angle approximation and is therefore an estimate.
 - **Second derivatives are noise-sensitive.** Acceleration and power should be interpreted with smoothing enabled when the raw curves look jagged.
 - **Total mechanical energy** is computed from the measured motion and includes no model of the impact itself; its drop across the impact is the quantity of interest.
+
+## License
+
+This project is released under the [MIT License](LICENSE). Copyright (c) 2026 Lucas Espinola.
+
+The license covers both the desktop application and the Arduino firmware in this repository. You may use, copy, modify and distribute them, including commercially, provided that the copyright notice and the license text are kept. The software is provided "as is", without warranty of any kind.

@@ -16,6 +16,10 @@ build/
 dist/
 *.egg-info/
 
+# PyInstaller output (the .exe is published as a GitHub release asset)
+*.spec
+*.exe
+
 # Temporary files
 *.tmp
 *.temp
