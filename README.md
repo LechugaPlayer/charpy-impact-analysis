@@ -10,6 +10,13 @@ Desktop application for analysing data from a home-built **Charpy impact test pe
 
 - [Features](#features)
 - [How it works](#how-it-works)
+- [Hardware and firmware](#hardware-and-firmware)
+  - [Wiring](#wiring)
+  - [Quadrature decoding](#quadrature-decoding)
+  - [Test state machine](#test-state-machine)
+  - [Sampling and storage](#sampling-and-storage)
+  - [Serial commands](#serial-commands)
+  - [Flashing and running a test](#flashing-and-running-a-test)
 - [Mathematical background](#mathematical-background)
   - [Cubic spline interpolation](#cubic-spline-interpolation)
   - [Differentiating the spline](#differentiating-the-spline)
@@ -58,6 +65,95 @@ flowchart LR
 3. Optionally, the angle is pre-smoothed with a Savitzky–Golay filter.
 4. A cubic spline is fitted to the angle in radians and evaluated, together with its first two derivatives, on a uniform grid of 400 points (or on the original sampling instants).
 5. Energies and power are computed from the spline; the absorbed energy is computed with the same two-point formula used by the firmware.
+
+## Hardware and firmware
+
+The data analysed by this application is produced by the Arduino sketch in [`charpy_final_1/charpy_final_1.ino`](charpy_final_1/charpy_final_1.ino). It runs on an **Arduino Uno (ATmega328P)** and uses a single external peripheral: an **E38S6G5-600B-G24N** incremental rotary encoder (600 pulses per revolution, quadrature A/B outputs) mounted on the pendulum axis. There is no display and the sketch needs no external libraries; all interaction goes through the serial port at **115200 baud**.
+
+### Wiring
+
+| Encoder wire | Arduino Uno | Notes |
+|---|---|---|
+| VCC | 5V | Use an external 9–12 V supply instead if the encoder does not respond at 5 V. |
+| GND | GND | Must be common with the Arduino, also when the encoder is powered externally. |
+| A | D2 (INT0) | External interrupt pin. |
+| B | D3 (INT1) | External interrupt pin. |
+| Shield / drain (if present) | GND | |
+
+The encoder outputs are NPN open-collector, so both pins are configured as `INPUT_PULLUP`.
+
+### Quadrature decoding
+
+Both channels are attached to external interrupts triggered on `CHANGE`, so every edge of A and of B is counted (×4 decoding):
+
+```math
+600 \times 4 = 2400 \text{ counts per revolution} \quad\Rightarrow\quad 0.15^\circ \text{ per count}
+```
+
+The interrupt routine is kept as short as possible:
+
+1. It reads both pins in a single access to the `PIND` port register instead of two `digitalRead()` calls.
+2. It combines the previous and the current 2-bit A/B state into a 4-bit index.
+3. It looks that index up in a 16-entry transition table, stored in flash (`PROGMEM`), which returns `+1`, `-1` or `0`. Invalid transitions (both bits changing at once) yield `0`, so they do not corrupt the count.
+4. It adds the result to a signed 32-bit counter.
+
+The main loop converts the counter to degrees. Because a 32-bit read is not atomic on an 8-bit microcontroller, the counter is copied with interrupts briefly disabled. The angle is relative to the zero set with the `z` command (pendulum hanging at rest), and its sign indicates the side of the swing.
+
+### Test state machine
+
+After the `s` command the firmware follows the swing with a small state machine, so that the capture starts and stops on the actual motion rather than on timers or key presses:
+
+```mermaid
+stateDiagram-v2
+    [*] --> ESPERANDO_LIBERACION: 's' command
+    ESPERANDO_LIBERACION --> EN_CAIDA_HACIA_IMPACTO: angle moves more than 3° from the initial angle
+    EN_CAIDA_HACIA_IMPACTO --> EN_SUBIDA_REBOTE: angle crosses zero (lowest point, impact)
+    EN_CAIDA_HACIA_IMPACTO --> [*]: 3 s timeout (test aborted)
+    EN_SUBIDA_REBOTE --> [*]: angle drops 1° below its maximum (rebound peak)
+    EN_SUBIDA_REBOTE --> [*]: 5 s timeout (maximum so far is used)
+```
+
+- **Waiting for release** (`ESPERANDO_LIBERACION`). Nothing is recorded and no timer runs while the pendulum is held; the operator can take as long as needed.
+- **Falling towards the impact** (`EN_CAIDA_HACIA_IMPACTO`). The sample buffer and the time origin are reset at the moment the release is detected. Sampling continues until the angle changes sign with respect to the initial angle, which marks the passage through the lowest point, where the specimen sits.
+- **Rising after the impact** (`EN_SUBIDA_REBOTE`). The maximum angle, in magnitude, is tracked on every loop iteration, restarting from the zero crossing. The peak is confirmed as soon as the angle has dropped more than 1° below that maximum, a threshold well above the 0.15° quantisation step. The firmware does not wait for the pendulum to come to rest.
+
+When the peak is confirmed, the capture stops and the result block is printed automatically. The absorbed energy uses the two-point formula described in [Pendulum physics](#pendulum-physics), with the mass and the pivot-to-centre-of-mass radius defined as constants at the top of the sketch.
+
+### Sampling and storage
+
+- **Rate.** While a test is in progress, the loop stores a sample whenever at least 3500 µs have passed since the previous one. This is a polling threshold, not a hardware timer, so the spacing is slightly irregular; each sample carries its own `micros()` timestamp, and the analysis does not assume a uniform grid.
+- **Buffer.** Up to 300 samples, which gives a capture window of about 1.05 s from the release. According to the design notes in the sketch, a release from 150° takes about 484 ms to reach the specimen, so the window covers the fall and the rebound.
+- **Memory.** Each sample takes 4 bytes: the time elapsed since the previous sample as a `uint16_t` in microseconds, and the angle multiplied by 100 as an `int16_t`. The full buffer uses 1200 of the 2048 bytes of SRAM on the Uno. Absolute timestamps are rebuilt by accumulating the deltas when the table is printed.
+- **Rebound angle.** The rebound maximum is tracked independently of the buffer, at the full loop rate, and keeps being updated even when the buffer is full.
+- **Serial output.** The live angle readout is suppressed during a capture, so no printing delays the sampling loop.
+
+### Serial commands
+
+Each command is a single character sent from the serial monitor:
+
+| Command | Action |
+|---|---|
+| `z` | Sets the current position as zero. Use it with the pendulum hanging at rest. |
+| `i` | Stores the current angle as the initial (release) angle. |
+| `s` | Arms the capture. The test starts when the pendulum is released. |
+| `e` | Recomputes and prints the result block (initial angle, rebound angle, gross energy and, once calibrated, friction loss and net energy). |
+| `c` | After a swing **without a specimen**, stores the energy lost in that swing as the friction loss. It is subtracted from later results. |
+| `d` | Prints the time/angle table of the last test. |
+| `m` | Prints the estimated free RAM (diagnostics). |
+
+While idle, the firmware prints the current angle and a text bar every 100 ms. The output is formatted so that the parser in `engine.py` only picks up the data table and the result lines; see [Input file format](#input-file-format).
+
+### Flashing and running a test
+
+1. Open `charpy_final_1/charpy_final_1.ino` in the Arduino IDE.
+2. Set `masa_pendulo` (kg) and `radio_centro_masa` (m) at the top of the sketch to the values of your pendulum. Use the same values later in the desktop application.
+3. Select the **Arduino Uno** board and its port, and upload.
+4. Open the serial monitor at 115200 baud.
+5. With the pendulum hanging at rest, send `z`.
+6. Optional, to calibrate friction: raise the pendulum, send `i` and `s`, release it with no specimen in place, wait for the result block and send `c`.
+7. Place the specimen, raise the pendulum to the release angle and send `i`, then `s`, and release it.
+8. After the result block appears, send `d` to print the data table.
+9. Copy the serial monitor output, including the result block and the table, into a `.txt` file and load it in the application.
 
 ## Mathematical background
 
@@ -128,7 +224,7 @@ The angular velocity $`\omega`$ is piecewise quadratic and the angular accelerat
 \delta = \frac{360^\circ}{600 \times 4} = 0.15^\circ \text{ per count}
 ```
 
-With a sampling step $`h = 1\ \text{ms}`$, an error $`\delta`$ in the angle is amplified roughly as $`\delta / h`$ in the velocity (on the order of $`150^\circ/\text{s}`$) and as $`\delta / h^2`$ in the acceleration (on the order of $`1.5 \times 10^5\ {}^\circ/\text{s}^2`$). The angle curve looks smooth, but acceleration and power can show a meaningless high-frequency sawtooth.
+With the firmware's sampling step $`h = 3.5\ \text{ms}`$, an error $`\delta`$ in the angle is amplified roughly as $`\delta / h`$ in the velocity (on the order of $`43^\circ/\text{s}`$) and as $`\delta / h^2`$ in the acceleration (on the order of $`1.2 \times 10^4\ {}^\circ/\text{s}^2`$). The angle curve looks smooth, but acceleration and power can show a meaningless high-frequency sawtooth.
 
 To mitigate this, the angle can be pre-filtered with a **Savitzky–Golay** filter before building the spline. For each sample, the filter fits a polynomial of degree 3 by least squares to a window of $`2k+1`$ neighbouring samples and replaces the sample with the value of that polynomial, which preserves the shape of peaks better than a moving average. The window must be an odd integer $`\geq 5`$ and no larger than the number of samples; values of 9 or 11 are a good starting point. Smoothing is disabled by default.
 
@@ -200,6 +296,7 @@ flowchart TD
 | `gui.py` | `CharpyApp` window: file loading, parameter entry, result display and four static plot tabs. Contains no physics. |
 | `exporter.py` | PDF report (ReportLab), JPG plots and processed-data TXT. Independent of the GUI. |
 | `requirements.txt` | Python dependencies. |
+| `charpy_final_1/charpy_final_1.ino` | Arduino Uno firmware that acquires the data. See [Hardware and firmware](#hardware-and-firmware). |
 
 Main elements of `engine.py`:
 
@@ -213,7 +310,7 @@ Main elements of `engine.py`:
 | `calcular_energia_absorbida_dos_puntos(...)` | function | Two-point absorbed energy, gross and net. |
 | `calcular_inercia_experimental(...)` | function | Moment of inertia from the oscillation period. |
 
-Identifiers, comments and GUI labels are written in Spanish and mirror the variable names used in the Arduino firmware. The firmware itself is not part of this repository.
+Identifiers, comments and GUI labels are written in Spanish and mirror the variable names used in the Arduino firmware, which is included in the `charpy_final_1/` folder.
 
 ## Installation
 
@@ -266,13 +363,15 @@ The input is a plain-text file containing the table printed by the firmware's `d
 ```text
 ===== TABLA DE DATOS (copiar y pegar en Excel/Sheets) =====
 Tiempo_us	Angulo_grados
-0	45.07
-1000	44.85
-2000	44.20
+148	41.85
+3652	41.40
+7160	40.65
 ...
 ====== FIN DE TABLA ======
-Total de puntos: 87
+Total de puntos: 187
 ```
+
+The values above are illustrative. Rows are about 3.5 ms apart and the first timestamp is a small non-zero value; the parser makes all times relative to the first sample.
 
 Any line that is not an `integer <separator> number` pair is ignored as data, so the whole serial monitor log can be saved as is. If the log also contains the firmware's result block (`e` command) or friction calibration (`c` command), the following lines are recognised and used automatically:
 
@@ -349,7 +448,7 @@ Pass `num_puntos_malla=None` to evaluate the spline at the original sampling ins
 
 ## Known limitations
 
-- **Capture window.** The firmware stores at most 100 samples at 1 ms intervals (a RAM limit of the Arduino Uno), that is, 100 ms of motion. If the swing from release to maximum rebound takes longer, the table is truncated before the turning point. Without the firmware's result block in the file, the rebound angle is then estimated from the last sample and the absorbed energy is likely overestimated; the application flags this case.
+- **Capture window.** The firmware stores at most 300 samples at 3.5 ms intervals (a RAM limit of the Arduino Uno), that is, about 1.05 s of motion from the release. If the swing from release to maximum rebound takes longer, the table is truncated before the turning point. Without the firmware's result block in the file, the rebound angle is then estimated from the last sample and the absorbed energy is likely overestimated; the application flags this case.
 - **Moment of inertia from the period** relies on the small-angle approximation and is therefore an estimate.
 - **Second derivatives are noise-sensitive.** Acceleration and power should be interpreted with smoothing enabled when the raw curves look jagged.
 - **Total mechanical energy** is computed from the measured motion and includes no model of the impact itself; its drop across the impact is the quantity of interest.
