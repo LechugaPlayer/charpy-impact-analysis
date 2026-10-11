@@ -25,6 +25,7 @@ Desktop application for analysing data from a home-built **Charpy impact test pe
   - [Pendulum physics](#pendulum-physics)
   - [Robustness heuristics](#robustness-heuristics)
 - [Architecture](#architecture)
+- [System Architecture](#system-architecture)
 - [Downloads](#downloads)
   - [Running the application on Windows](#running-the-application-on-windows)
   - [Building the executable yourself](#building-the-executable-yourself)
@@ -316,6 +317,28 @@ Main elements of `engine.py`:
 | `calcular_inercia_experimental(...)` | function | Moment of inertia from the oscillation period. |
 
 Identifiers, comments and GUI labels are written in Spanish and mirror the variable names used in the Arduino firmware, which is included in the `charpy_final_1/` folder.
+
+## System Architecture
+
+The graph below maps the dependencies and relationships between the Python scripts, the Arduino firmware and the documentation. It was generated with [graphify](https://github.com/safishamsi/graphify): the Python files were analysed structurally (imports, calls, classes), and the firmware, this README and `requirements.txt` were added through semantic extraction.
+
+![Knowledge graph of the project: Python modules, Arduino firmware and documentation grouped into seven communities](docs/system-architecture.png)
+
+Each dot is a file, class, function, firmware element or documented concept, and each line is a relationship such as an import, a call, shared data or a reference. Colours mark the seven communities found by clustering:
+
+| Community | Main contents |
+|---|---|
+| Arduino firmware | The functions of `charpy_final_1.ino`, the test state machine, the sample buffer and the encoder. |
+| Serial data contract | `imprimirTablaDatos()` and `imprimirBloqueResultado()` in the firmware, together with `read_arduino_data()` and `ArduinoMetadata` in the engine, which parse their output. |
+| Spline analysis and maths | `MotorCharpy.analizar()`, glitch rejection, rebound estimation, the two-point energy formula and the README sections that describe them. |
+| Physics engine and parameters | `engine.py`, `MotorCharpy`, `ParametrosFisicos` and the moment of inertia calculation. |
+| Graphical interface (CharpyApp) | The `CharpyApp` class in `gui.py` and `ResultadoAnalisis`. |
+| Result export | `exporter.py` (PDF, JPG and TXT). |
+| Startup and dependencies | `main.py`, its dependency check and `requirements.txt`. |
+
+The most connected nodes are `CharpyApp`, `ParametrosFisicos`, `exportar_reporte_pdf()`, `ResultadoAnalisis`, `read_arduino_data()` and the firmware's `loop()`. The links between the firmware and the Python code go through the serial log format and the shared two-point energy formula; there is no direct call between the two.
+
+The image is a simplified view with 98 of the 153 nodes: docstring nodes and external modules are left out, and only the main nodes are labelled. The complete, interactive graph is in [`graph.html`](graph.html) at the root of the repository. GitHub shows that file as source code, so download it or clone the repository and open it in a browser; it loads the vis-network library from the internet. Its community names are in Spanish.
 
 ## Downloads
 

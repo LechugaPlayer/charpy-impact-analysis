@@ -20,6 +20,9 @@ dist/
 *.spec
 *.exe
 
+# graphify working directory (graph.html is copied to the repository root)
+graphify-out/
+
 # Temporary files
 *.tmp
 *.temp
